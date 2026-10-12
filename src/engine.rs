@@ -116,10 +116,23 @@ pub struct Engine {
     freed_total: u64,
     health: Option<String>,
     last_snapshot: Option<Snapshot>,
+    /// Observe-only: never pin, squash, uncap, or touch the hold store.
+    read_only: bool,
 }
 
 impl Engine {
     pub fn new(cfg: Config) -> Result<Self> {
+        Self::build(cfg, false)
+    }
+
+    /// An engine that only looks. `status` and `list` must not change
+    /// anything, and in particular must not restore holds out from under a
+    /// daemon that is legitimately holding them.
+    pub fn observer(cfg: Config) -> Result<Self> {
+        Self::build(cfg, true)
+    }
+
+    fn build(cfg: Config, read_only: bool) -> Result<Self> {
         let backend = backend()?;
         let health = backend.health().err().map(|e| e.to_string());
         let mut e = Self {
@@ -134,10 +147,11 @@ impl Engine {
             freed_total: 0,
             health,
             last_snapshot: None,
+            read_only,
         };
         // A process killed with SIGKILL never ran its cleanup, which would
         // leave the user's apps capped with nothing around to undo it.
-        if !e.holds.is_empty() {
+        if !read_only && !e.holds.is_empty() {
             let n = e.holds.holds.len();
             e.restore_persisted();
             e.say(format!(
@@ -180,6 +194,9 @@ impl Engine {
     }
 
     fn note_hold(&mut self, key: &str, f: impl FnOnce(&mut Hold)) {
+        if self.read_only {
+            return;
+        }
         let h = self.holds.holds.entry(key.to_string()).or_default();
         f(h);
         if h == &Hold::default() {
@@ -204,6 +221,7 @@ impl Engine {
             freed_total: 0,
             health: None,
             last_snapshot: None,
+            read_only: false,
         }
     }
 
@@ -300,6 +318,18 @@ impl Engine {
             }
         }
 
+        let game_now = !game_pids.is_empty();
+        let victims = self.backend.targets(&victim_pids);
+
+        if self.read_only {
+            self.game_active = game_now;
+            let games = self.backend.targets(&game_pids);
+            let exempt = self.backend.targets(&exempt_pids);
+            let pinned = self.backend.targets(&pinned_pids);
+            self.publish(game_names, games, exempt, victims, pinned, summaries);
+            return;
+        }
+
         // Pins are unconditional: not gated on a game, not gated on a call.
         // Latency-critical apps accumulate pagefile residency during ordinary
         // desktop use, entirely without a game involved.
@@ -320,9 +350,6 @@ impl Engine {
                 }
             }
         }
-
-        let game_now = !game_pids.is_empty();
-        let victims = self.backend.targets(&victim_pids);
 
         if game_now && !self.game_active {
             self.say(format!(
@@ -618,6 +645,9 @@ impl Engine {
 
     /// Release every ceiling and pin. Must run on any orderly exit.
     pub fn shutdown(&mut self) {
+        if self.read_only {
+            return;
+        }
         self.say("shutting down - releasing all holds");
         self.restore_persisted();
     }
@@ -868,6 +898,34 @@ mod tests {
             0,
             "an app seen for the first time mid-game is probably one you just opened"
         );
+    }
+
+    #[test]
+    fn read_only_engine_never_mutates() {
+        let (mut e, m) = engine_with(fast_cfg());
+        e.read_only = true;
+        let t = target();
+        // Even asked directly, the hold store stays untouched...
+        e.note_hold("1", |h| h.pinned = true);
+        assert!(
+            e.holds.holds.is_empty(),
+            "observer mode must not record holds"
+        );
+        // ...and shutdown must not undo a running daemon's work.
+        m.capped.store(1, Ordering::Relaxed);
+        m.pinned.store(1, Ordering::Relaxed);
+        e.shutdown();
+        assert_eq!(
+            m.capped.load(Ordering::Relaxed),
+            1,
+            "observer must not uncap"
+        );
+        assert_eq!(
+            m.pinned.load(Ordering::Relaxed),
+            1,
+            "observer must not unpin"
+        );
+        let _ = t;
     }
 
     #[test]

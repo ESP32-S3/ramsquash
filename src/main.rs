@@ -98,7 +98,7 @@ fn human(bytes: u64) -> String {
 }
 
 fn status() -> Result<()> {
-    let mut e = Engine::new(Config::load()?)?;
+    let mut e = Engine::observer(Config::load()?)?;
     e.tick();
     let Some(s) = e.take_snapshot() else {
         println!("no snapshot");
@@ -163,7 +163,7 @@ fn truncate(s: &str, n: usize) -> String {
 
 fn list() -> Result<()> {
     let filter = std::env::args().nth(2).unwrap_or_default().to_lowercase();
-    let mut e = Engine::new(Config::load()?)?;
+    let mut e = Engine::observer(Config::load()?)?;
     e.tick();
     let Some(s) = e.take_snapshot() else {
         return Ok(());
