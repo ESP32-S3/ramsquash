@@ -1,0 +1,25 @@
+# systemd user service. Install with:
+#   mkdir -p ~/.config/systemd/user
+#   cp packaging/ramsquash.service ~/.config/systemd/user/
+#   systemctl --user enable --now ramsquash.service
+[Unit]
+Description=Park idle background apps in swap while a game runs
+After=graphical-session.target
+
+[Service]
+Type=simple
+# Clears any ceiling left behind by an unclean exit before starting.
+ExecStartPre=-%h/.local/bin/ramsquash release
+ExecStart=%h/.local/bin/ramsquash daemon
+ExecStop=%h/.local/bin/ramsquash release
+Restart=on-failure
+RestartSec=5
+Nice=10
+IOSchedulingClass=idle
+# The watchdog must never be a casualty of the pressure it creates.
+MemoryLow=32M
+ManagedOOMMemoryPressure=off
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=graphical-session.target

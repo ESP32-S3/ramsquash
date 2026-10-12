@@ -1,0 +1,42 @@
+[package]
+name = "ramsquash"
+version = "0.1.0"
+edition = "2024"
+description = "Push idle background apps out to swap while a game runs, and pull them back when you use them again."
+license = "MIT"
+repository = "https://github.com/ESP32-S3/ramsquash"
+readme = "README.md"
+keywords = ["gaming", "memory", "swap", "cgroups", "performance"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+anyhow = "1.0.104"
+dirs = "7.0.0"
+serde = { version = "1.0.229", features = ["derive"] }
+sysinfo = "0.39.6"
+toml = "1.1.8"
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"], optional = true }
+egui = { version = "0.36.2", optional = true }
+ctrlc = "3.5.2"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Win32_System_Memory",
+    "Win32_Security",
+] }
+
+[features]
+default = ["gui"]
+# The GUI pulls in windowing and OpenGL deps. `--no-default-features` yields a
+# headless binary that still runs the daemon and the whole CLI - which is what
+# you want on a server, in a container, or where those build deps are missing.
+gui = ["dep:eframe", "dep:egui"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
